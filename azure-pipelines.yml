@@ -1,0 +1,19 @@
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- checkout: self
+
+- task: TerraformInstaller@1
+  inputs:
+    terraformVersion: 'latest'
+
+- script: |
+    cd terraform
+    terraform init
+    terraform plan
+    terraform apply -auto-approve
+  displayName: 'Run Terraform'
