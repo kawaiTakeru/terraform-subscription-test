@@ -2,7 +2,7 @@ trigger:
 - main
 
 pool:
-  vmImage: ubuntu-latest  # Self-hosted Agent 使う場合は後で名前変更
+  name: Default  # Self-hosted Agent の名前（Azure DevOps の Agent Pools > Default）
 
 steps:
 - checkout: self
@@ -13,3 +13,4 @@ steps:
     terraform plan
     terraform apply -auto-approve
   displayName: 'Run Terraform'
+  
