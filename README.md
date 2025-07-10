@@ -1,0 +1,1 @@
+# terraform-subscription-test
