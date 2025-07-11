@@ -5,28 +5,25 @@ pool:
   name: Default  # Self-hosted Agent の名前
 
 steps:
-- checkout: self
-
-# 🔽 Dump CI Context 情報を表示（Function からの実行確認用）
+# ① パイプライン実行時のコンテキスト情報をログ出力
 - script: |
-    echo "Build.SourceBranch: $(Build.SourceBranch)"
-    echo "Build.Reason: $(Build.Reason)"
-    echo "Build.RequestedFor: $(Build.RequestedFor)"
-    echo "Build.RequestedForEmail: $(Build.RequestedForEmail)"
-    echo "Build.TriggeredByBuildId: $(Build.TriggeredByBuildId)"
-    echo "Agent.Name: $(Agent.Name)"
-    echo "Agent.OS: $(Agent.OS)"
-    echo "Agent.MachineName: $(Agent.MachineName)"
-    echo "System.TeamProject: $(System.TeamProject)"
-    echo "System.CollectionUri: $(System.CollectionUri)"
-  displayName: '🔍 Show Pipeline Context'
+    echo "🔍 [Build Info]"
+    echo "Build.SourceBranch: $BUILD_SOURCEBRANCH"
+    echo "Build.Reason: $BUILD_REASON"
+    echo "Build.RequestedFor: $BUILD_REQUESTEDFOR"
+    echo "Build.RequestedForEmail: $BUILD_REQUESTEDFOREMAIL"
+    echo "Build.TriggeredByBuildId: $BUILD_TRIGGEREDBYBUILDID"
+    echo "Agent.Name: $AGENT_NAME"
+    echo "Agent.OS: $AGENT_OS"
+    echo "Agent.MachineName: $AGENT_MACHINENAME"
+    echo "System.TeamProject: $SYSTEM_TEAMPROJECT"
+    echo "System.CollectionUri: $SYSTEM_COLLECTIONURI"
+  displayName: "🔍 Show Pipeline Context"
 
-# 🔽 Terraform 実行ステップ
+# ② Terraform の実行ステップ
 - script: |
     cd terraform
     terraform init
     terraform plan
     terraform apply -auto-approve
-  displayName: 'Run Terraform'
-
-  
+  displayName: '⚙️ Run Terraform'
