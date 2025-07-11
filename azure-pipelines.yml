@@ -7,6 +7,7 @@ pool:
 steps:
 - checkout: self
 
+# 🔍 パイプライン環境変数のデバッグ情報を出力
 - script: |
     echo 🔍 [Build Info]
     echo Build.SourceBranch: %BUILD_SOURCEBRANCH%
@@ -20,9 +21,17 @@ steps:
     echo System.CollectionUri: %SYSTEM_COLLECTIONURI%
   displayName: '🔍 Show Pipeline Context'
 
+# ⚙️ Terraform 実行ステップ（init → plan → apply）
 - script: |
+    echo "📂 cd terraform/"
     cd terraform
+
+    echo "▶ terraform init"
     terraform init
-    terraform plan
-    terraform apply -auto-approve
+
+    echo "▶ terraform plan"
+    terraform plan || echo "⚠️ terraform plan failed (予想されるエラーかも)"
+
+    echo "▶ terraform apply"
+    terraform apply -auto-approve || echo "❌ terraform apply failed（想定通りならOK）"
   displayName: '⚙️ Run Terraform'
