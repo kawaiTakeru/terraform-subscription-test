@@ -5,22 +5,21 @@ pool:
   name: Default  # Self-hosted Agent の名前
 
 steps:
-# ① パイプライン実行時のコンテキスト情報をログ出力
-- script: |
-    echo "🔍 [Build Info]"
-    echo "Build.SourceBranch: $BUILD_SOURCEBRANCH"
-    echo "Build.Reason: $BUILD_REASON"
-    echo "Build.RequestedFor: $BUILD_REQUESTEDFOR"
-    echo "Build.RequestedForEmail: $BUILD_REQUESTEDFOREMAIL"
-    echo "Build.TriggeredByBuildId: $BUILD_TRIGGEREDBYBUILDID"
-    echo "Agent.Name: $AGENT_NAME"
-    echo "Agent.OS: $AGENT_OS"
-    echo "Agent.MachineName: $AGENT_MACHINENAME"
-    echo "System.TeamProject: $SYSTEM_TEAMPROJECT"
-    echo "System.CollectionUri: $SYSTEM_COLLECTIONURI"
-  displayName: "🔍 Show Pipeline Context"
+- checkout: self
 
-# ② Terraform の実行ステップ
+- script: |
+    echo 🔍 [Build Info]
+    echo Build.SourceBranch: %BUILD_SOURCEBRANCH%
+    echo Build.Reason: %BUILD_REASON%
+    echo Build.RequestedFor: %BUILD_REQUESTEDFOR%
+    echo Build.RequestedForEmail: %BUILD_REQUESTEDFOREMAIL%
+    echo Agent.Name: %AGENT_NAME%
+    echo Agent.OS: %AGENT_OS%
+    echo Agent.MachineName: %AGENT_MACHINENAME%
+    echo System.TeamProject: %SYSTEM_TEAMPROJECT%
+    echo System.CollectionUri: %SYSTEM_COLLECTIONURI%
+  displayName: '🔍 Show Pipeline Context'
+
 - script: |
     cd terraform
     terraform init
