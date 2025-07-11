@@ -8,9 +8,27 @@ steps:
 - checkout: self
 
 - script: |
+    echo "##[group]Dumping Azure Pipelines Context Info"
+    echo "Build.SourceBranch: $(Build.SourceBranch)"
+    echo "Build.SourceBranchName: $(Build.SourceBranchName)"
+    echo "Build.SourceVersion: $(Build.SourceVersion)"
+    echo "Build.RequestedFor: $(Build.RequestedFor)"
+    echo "Build.RequestedForEmail: $(Build.RequestedForEmail)"
+    echo "Build.Reason: $(Build.Reason)"
+    echo "Build.QueuedBy: $(Build.QueuedBy)"
+    echo "Build.TriggeredByBuildId: $(Build.TriggeredByBuildId)"
+    echo "Agent.Name: $(Agent.Name)"
+    echo "Agent.MachineName: $(Agent.MachineName)"
+    echo "Agent.OS: $(Agent.OS)"
+    echo "System.JobName: $(System.JobName)"
+    echo "##[endgroup]"
+  displayName: 'Dump CI context'
+
+- script: |
     cd terraform
     terraform init
     terraform plan
     terraform apply -auto-approve
   displayName: 'Run Terraform'
+
   
