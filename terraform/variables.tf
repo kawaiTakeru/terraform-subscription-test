@@ -1,6 +1,5 @@
-
 variable "subscription_alias_name" {
-  description = "内部で使われるサブスクリプションエイリアス名"
+  description = "内部で使われるサブスクリプションエイリアス名（例: cr_subscription_test_99）"
   type        = string
 }
 
@@ -10,7 +9,7 @@ variable "subscription_display_name" {
 }
 
 variable "billing_account_name" {
-  description = "課金アカウント名"
+  description = "課金アカウント名（例: abcd1234）"
   type        = string
 }
 
@@ -25,27 +24,7 @@ variable "invoice_section_name" {
 }
 
 variable "subscription_workload" {
-  description = "ワークロード種別"
+  description = "ワークロード種別（例: Production / DevTest）"
   type        = string
   default     = "Production"
-}
-
-variable "resource_group_name" {
-  description = "The name of the resource group"
-  type        = string
-}
-
-variable "location" {
-  description = "The Azure region"
-  type        = string
-}
-
-variable "vnet_name" {
-  description = "The name of the Virtual Network"
-  type        = string
-}
-
-variable "subnet_name" {
-  description = "The name of the Subnet"
-  type        = string
 }
