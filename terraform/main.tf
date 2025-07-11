@@ -1,4 +1,3 @@
-
 terraform {
   required_providers {
     azapi = {
@@ -32,7 +31,7 @@ resource "null_resource" "check_billing_permission" {
   }
 }
 
-# ✅ サブスクリプション作成（例）
+# ✅ サブスクリプション作成（失敗しても問題ない想定）
 resource "azapi_resource" "subscription" {
   type      = "Microsoft.Subscription/aliases@2021-10-01"
   name      = var.subscription_alias_name
@@ -53,26 +52,4 @@ resource "azapi_resource" "subscription" {
   }
 
   depends_on = [null_resource.check_billing_permission]
-}
-
-# ✅ リソースグループ作成
-resource "azurerm_resource_group" "vnet_rg" {
-  name     = var.resource_group_name
-  location = var.location
-}
-
-# ✅ 仮想ネットワーク作成
-resource "azurerm_virtual_network" "vnet" {
-  name                = var.vnet_name
-  address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.vnet_rg.location
-  resource_group_name = azurerm_resource_group.vnet_rg.name
-}
-
-# ✅ サブネット作成
-resource "azurerm_subnet" "subnet" {
-  name                 = var.subnet_name
-  resource_group_name  = azurerm_resource_group.vnet_rg.name
-  virtual_network_name = azurerm_virtual_network.vnet.name
-  address_prefixes     = ["10.0.1.0/24"]
 }
