@@ -5,37 +5,38 @@ trigger:
 
 pool:
   name: Default
-  # demands: は削除 or コメントアウト（Terraform は手動インストール済み）
   # demands:
   #   - terraform
 
 variables:
-  TF_VERSION: '1.6.6'  # 今回は使わないが残してOK
+  TF_VERSION: '1.6.6'
 
 stages:
   - stage: TerraformApply
     jobs:
-      - job: Apply
+      - job: Job
         steps:
+          - checkout: self
+
           - script: |
               echo "##[group]Step 1: Git clone"
               git clone https://github.com/kawaiTakeru/terraform-subscription-test.git
               cd terraform-subscription-test/terraform
               echo "##[endgroup]"
 
-              echo "##[group]Step 2: terraform init"
+              echo "##[group]Step 2: terraform init 実行"
               terraform init
               echo "##[endgroup]"
 
-              echo "##[group]Step 3: terraform plan"
+              echo "##[group]Step 3: terraform plan 実行"
               terraform plan
               echo "##[endgroup]"
 
-              echo "##[group]Step 4: terraform apply"
+              echo "##[group]Step 4: terraform apply 実行"
               terraform apply -auto-approve
               echo "##[endgroup]"
 
               echo "##[group]Step 5: 完了 ✅"
               echo "✅ サブスクリプション作成成功 ✅"
               echo "##[endgroup]"
-            displayName: 'Terraform Apply for Subscription'
+            displayName: 'Run Terraform'
