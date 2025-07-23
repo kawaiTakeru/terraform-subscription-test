@@ -1,37 +1,68 @@
 trigger:
-- main
+  branches:
+    include:
+      - main
 
 pool:
-  name: Default  # Self-hosted Agent の名前
+  name: Default  # Self-hosted Agent
+  demands:
+    - terraform
 
-steps:
-- checkout: self
+variables:
+  TF_VERSION: '1.6.6'
 
-# 🔍 パイプライン環境変数のデバッグ情報を出力
-- script: |
-    echo 🔍 [Build Info]
-    echo Build.SourceBranch: %BUILD_SOURCEBRANCH%
-    echo Build.Reason: %BUILD_REASON%
-    echo Build.RequestedFor: %BUILD_REQUESTEDFOR%
-    echo Build.RequestedForEmail: %BUILD_REQUESTEDFOREMAIL%
-    echo Agent.Name: %AGENT_NAME%
-    echo Agent.OS: %AGENT_OS%
-    echo Agent.MachineName: %AGENT_MACHINENAME%
-    echo System.TeamProject: %SYSTEM_TEAMPROJECT%
-    echo System.CollectionUri: %SYSTEM_COLLECTIONURI%
-  displayName: '🔍 Show Pipeline Context'
+stages:
+  - stage: SubscriptionCreate
+    jobs:
+      - job: Create
+        steps:
+          - task: UseTerraform@0
+            inputs:
+              terraformVersion: '$(TF_VERSION)'
 
-# ⚙️ Terraform 実行ステップ（init → plan → apply）
-- script: |
-    echo "📂 cd terraform/"
-    cd terraform
+          - script: |
+              echo "##[group]Step 1: GitHub から clone 開始"
+              git clone https://github.com/kawaiTakeru/terraform-subscription-test.git
+              cd terraform-subscription-test/terraform
+              echo "##[endgroup]"
 
-    echo "▶ terraform init"
-    terraform init
+              echo "##[group]Step 2: terraform init 開始"
+              terraform init
+              echo "##[endgroup]"
 
-    echo "▶ terraform plan"
-    terraform plan || echo "⚠️ terraform plan failed (予想されるエラーかも)"
+              echo "##[group]Step 3: terraform plan 開始"
+              terraform plan
+              echo "##[endgroup]"
 
-    echo "▶ terraform apply"
-    terraform apply -auto-approve || echo "❌ terraform apply failed（想定通りならOK）"
-  displayName: '⚙️ Run Terraform'
+              echo "##[group]Step 4: terraform apply 開始"
+              terraform apply -auto-approve
+              echo "##[endgroup]"
+
+              echo "##[group]Step 5: Slack通知"
+              echo "Slack通知は別ステップで送信"
+              echo "##[endgroup]"
+
+              echo "##[group]Step 6: 完了 ✅"
+              echo "✅ サブスクリプション作成成功 ✅"
+              echo "##[endgroup]"
+            displayName: 'Run Terraform (Subscription Create)'
+
+          - task: PowerShell@2
+            displayName: 'Slack通知（成功）'
+            condition: succeeded()
+            inputs:
+              targetType: 'inline'
+              script: |
+                $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
+                $payload = @{ text = "✅ サブスクリプション作成成功 ✅" } | ConvertTo-Json
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
+
+          - task: PowerShell@2
+            displayName: 'Slack通知（失敗）'
+            condition: failed()
+            inputs:
+              targetType: 'inline'
+              script: |
+                $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
+                $payload = @{ text = "❌ サブスクリプション作成失敗 ❌" } | ConvertTo-Json
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
