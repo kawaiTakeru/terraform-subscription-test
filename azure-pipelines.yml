@@ -17,6 +17,7 @@ stages:
       - job: Job
         steps:
           - checkout: self
+            displayName: '🔍 Checkout kawaiTakeru/terraform-subscription-test'
 
           - script: |
               echo "##[group]Step 1: Git clone"
@@ -24,19 +25,19 @@ stages:
               cd terraform-subscription-test/terraform
               echo "##[endgroup]"
 
-              echo "##[group]Step 2: terraform init 実行"
+              echo "##[group]Step 2: terraform init"
               terraform init
               echo "##[endgroup]"
 
-              echo "##[group]Step 3: terraform plan 実行"
+              echo "##[group]Step 3: terraform plan"
               terraform plan
               echo "##[endgroup]"
 
-              echo "##[group]Step 4: terraform apply 実行"
+              echo "##[group]Step 4: terraform apply"
               terraform apply -auto-approve
               echo "##[endgroup]"
 
               echo "##[group]Step 5: 完了 ✅"
               echo "✅ サブスクリプション作成成功 ✅"
               echo "##[endgroup]"
-            displayName: 'Run Terraform'
+            displayName: '⚙️ Run Terraform'
