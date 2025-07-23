@@ -4,7 +4,7 @@ trigger:
       - main
 
 pool:
-  name: Default  # Self-hosted Agent
+  name: Default  # あなたの Self-hosted Agent の名前
   demands:
     - terraform
 
@@ -12,57 +12,49 @@ variables:
   TF_VERSION: '1.6.6'
 
 stages:
-  - stage: SubscriptionCreate
+  - stage: TerraformApply
     jobs:
-      - job: Create
+      - job: Apply
         steps:
-          - task: UseTerraform@0
-            inputs:
-              terraformVersion: '$(TF_VERSION)'
-
           - script: |
-              echo "##[group]Step 1: GitHub から clone 開始"
+              echo "##[group]Step 1: Git clone"
               git clone https://github.com/kawaiTakeru/terraform-subscription-test.git
               cd terraform-subscription-test/terraform
               echo "##[endgroup]"
 
-              echo "##[group]Step 2: terraform init 開始"
+              echo "##[group]Step 2: terraform init"
               terraform init
               echo "##[endgroup]"
 
-              echo "##[group]Step 3: terraform plan 開始"
+              echo "##[group]Step 3: terraform plan"
               terraform plan
               echo "##[endgroup]"
 
-              echo "##[group]Step 4: terraform apply 開始"
+              echo "##[group]Step 4: terraform apply"
               terraform apply -auto-approve
               echo "##[endgroup]"
 
-              echo "##[group]Step 5: Slack通知"
-              echo "Slack通知は別ステップで送信"
-              echo "##[endgroup]"
-
-              echo "##[group]Step 6: 完了 ✅"
+              echo "##[group]Step 5: 完了 ✅"
               echo "✅ サブスクリプション作成成功 ✅"
               echo "##[endgroup]"
-            displayName: 'Run Terraform (Subscription Create)'
+            displayName: 'Terraform Apply (Subscription Create)'
 
           - task: PowerShell@2
-            displayName: 'Slack通知（成功）'
+            displayName: 'Notify Slack (Success)'
             condition: succeeded()
             inputs:
               targetType: 'inline'
               script: |
                 $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
-                $payload = @{ text = "✅ サブスクリプション作成成功 ✅" } | ConvertTo-Json
+                $payload = @{ text = "✅ Terraform apply 成功 ✅" } | ConvertTo-Json
                 Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
 
           - task: PowerShell@2
-            displayName: 'Slack通知（失敗）'
+            displayName: 'Notify Slack (Failure)'
             condition: failed()
             inputs:
               targetType: 'inline'
               script: |
                 $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
-                $payload = @{ text = "❌ サブスクリプション作成失敗 ❌" } | ConvertTo-Json
+                $payload = @{ text = "❌ Terraform apply 失敗 ❌" } | ConvertTo-Json
                 Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
