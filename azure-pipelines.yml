@@ -4,11 +4,13 @@ trigger:
       - main
 
 pool:
-  name: Default  # あなたの Self-hosted Agent の名前
-  demands:
-    - terraform
+  name: Default
+  # demands: は削除 or コメントアウト（Terraform は手動インストール済み）
+  # demands:
+  #   - terraform
 
-
+variables:
+  TF_VERSION: '1.6.6'  # 今回は使わないが残してOK
 
 stages:
   - stage: TerraformApply
@@ -36,24 +38,4 @@ stages:
               echo "##[group]Step 5: 完了 ✅"
               echo "✅ サブスクリプション作成成功 ✅"
               echo "##[endgroup]"
-            displayName: 'Terraform Apply (Subscription Create)'
-
-          - task: PowerShell@2
-            displayName: 'Notify Slack (Success)'
-            condition: succeeded()
-            inputs:
-              targetType: 'inline'
-              script: |
-                $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
-                $payload = @{ text = "✅ Terraform apply 成功 ✅" } | ConvertTo-Json
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
-
-          - task: PowerShell@2
-            displayName: 'Notify Slack (Failure)'
-            condition: failed()
-            inputs:
-              targetType: 'inline'
-              script: |
-                $webhookUrl = "${env:SLACK_WEBHOOK_URL}"
-                $payload = @{ text = "❌ Terraform apply 失敗 ❌" } | ConvertTo-Json
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body $payload
+            displayName: 'Terraform Apply for Subscription'
