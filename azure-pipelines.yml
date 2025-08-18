@@ -12,7 +12,8 @@ variables:
 stages:
 # =========================================================
 # Stage0: Subscription (Create via AzAPI)
-#   - alias があれば apply せずに subscriptionId を取得
+#   - tfvars/alias が無ければ失敗させず RUN_LATER を出力して早期 return
+#   - alias があれば apply せず subscriptionId を取得
 #   - alias がなければ Terraform で alias 作成 → subscriptionId を取得
 # =========================================================
 - stage: stage0_subscription
@@ -109,13 +110,22 @@ stages:
             return ""
           }
 
+          # === tfvars 存在チェック（無ければ RUN_LATER を出力して早期 return）===
           if (-not (Test-Path -LiteralPath $tfvars)) {
-            throw ("terraform.tfvars not found: " + $tfvars)
+            Write-Warning "terraform.tfvars not found: $tfvars"
+            Write-Host ("##vso[task.setvariable variable=subscriptionAlias;isOutput=true]")
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
+            Write-Host "⏭  Stage0: tfvars 未検出のため RUN_LATER を出力して終了します。"
+            return
           }
 
           $aliasName = Get-AliasNameFromTfvars -Path $tfvars
           if ([string]::IsNullOrWhiteSpace($aliasName)) {
-            throw "subscription_alias_name is empty in tfvars. Set it first."
+            Write-Warning "subscription_alias_name is empty in tfvars."
+            Write-Host ("##vso[task.setvariable variable=subscriptionAlias;isOutput=true]")
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
+            Write-Host "⏭  Stage0: alias 未設定のため RUN_LATER を出力して終了します。"
+            return
           }
 
           # 次段でも参照できるよう alias を出力
@@ -167,10 +177,11 @@ stages:
             Write-Host "✅ Resolved subscriptionId (created): $subId"
           } else {
             Write-Warning "subscriptionId not resolved in Stage0 (alias may still be provisioning)."
-            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]")
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
+            Write-Host "⏭  Stage0: RUN_LATER を出力して終了します。"
           }
 
-    # 🔎 Stage0 出力の可視化（同一 Job 内は $(tf.xxx) で参照できる）
+    # Stage0 出力の可視化
     - powershell: |
         Write-Host "== Stage0 outputs =="
         Write-Host "alias : $(tf.subscriptionAlias)"
@@ -178,7 +189,7 @@ stages:
       displayName: "Echo Stage0 outputs (debug)"
 
 # =========================================================
-# Stage1〜4: 下流（Stage0 の subscriptionId が空なら停止）
+# Stage1〜4: 下流（subscriptionId が RUN_LATER または空なら停止）
 # =========================================================
 - stage: stage1_rg
   displayName: "Stage1 - Resource Group"
@@ -186,13 +197,14 @@ stages:
   variables:
     subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
     subscriptionAlias:        $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionAlias'] ]
-  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], 'RUN_LATER'), ne(variables['subscriptionIdFromStage0'], ''))
   jobs:
   - job: apply_rg
     displayName: "RG作成"
     steps:
     - powershell: |
         Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+        Write-Host "subscriptionAlias        = $(subscriptionAlias)"
       displayName: "Echo subId (debug)"
 
     - task: AzureCLI@2
@@ -219,7 +231,7 @@ stages:
   dependsOn: stage1_rg
   variables:
     subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
-  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], 'RUN_LATER'), ne(variables['subscriptionIdFromStage0'], ''))
   jobs:
   - job: apply_vnet
     displayName: "VNet作成"
@@ -252,7 +264,7 @@ stages:
   dependsOn: stage2_vnet
   variables:
     subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
-  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], 'RUN_LATER'), ne(variables['subscriptionIdFromStage0'], ''))
   jobs:
   - job: apply_subnet
     displayName: "Subnet + NSG + 関連付け"
@@ -279,3 +291,24 @@ stages:
           } finally {
             Pop-Location
           }
+
+# （参考）Stage4 は今回は未実行のまま
+- stage: stage4a_peering_s2h
+  displayName: "Stage4a - Peering Spoke->Hub"
+  dependsOn: stage3_subnet
+  condition: false
+  jobs:
+  - job: placeholder_peering_s2h
+    steps:
+    - powershell: |
+        Write-Host "[PEERING S->H] placeholder"
+
+- stage: stage4b_peering_h2s
+  displayName: "Stage4b - Peering Hub->Spoke"
+  dependsOn: stage4a_peering_s2h
+  condition: false
+  jobs:
+  - job: placeholder_peering_h2s
+    steps:
+    - powershell: |
+        Write-Host "[PEERING H->S] placeholder"
