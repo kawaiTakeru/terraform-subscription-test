@@ -12,9 +12,9 @@ variables:
 stages:
 # =========================================================
 # Stage0: Subscription (Create via AzAPI)
-#   - tfvars/alias が無ければ失敗させず RUN_LATER を出力して早期 return
+#   - tfvars/alias 無ければ失敗させず RUN_LATER を出力して早期 return
 #   - alias があれば apply せず subscriptionId を取得
-#   - alias がなければ Terraform で alias 作成 → subscriptionId を取得
+#   - alias 無ければ Terraform で alias 作成 → subscriptionId を取得
 # =========================================================
 - stage: stage0_subscription
   displayName: "Stage0 - Create Subscription (AzAPI)"
@@ -26,6 +26,7 @@ stages:
         Write-Host "Agent Name  : $env:AGENT_NAME"
         Write-Host "Agent OS    : $env:AGENT_OS"
         Write-Host "Agent Ver   : $env:AGENT_VERSION"
+        Write-Host "Src Dir     : $(Build.SourcesDirectory)"
       displayName: "Show Agent Info"
 
     - task: AzureCLI@2
@@ -68,8 +69,19 @@ stages:
           $ProgressPreference = 'SilentlyContinue'
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          $stageDir = "$(Build.SourcesDirectory)\terraform\stage0-subscription"
-          $tfvars   = "$(Build.SourcesDirectory)\terraform\stage0-subscription\terraform.tfvars"
+          function Resolve-StageDir {
+            param([string]$base)
+            $p1 = Join-Path $base 'terraform\stage0-subscription'
+            $p2 = Join-Path $base 'subscription-api\terraform\stage0-subscription'
+            if (Test-Path -LiteralPath $p1) { return $p1 }
+            if (Test-Path -LiteralPath $p2) { return $p2 }
+            return $p1 # デフォルト
+          }
+
+          $stageDir = Resolve-StageDir -base "$(Build.SourcesDirectory)"
+          $tfvars   = Join-Path $stageDir 'terraform.tfvars'
+          Write-Host "Stage0 stageDir = $stageDir"
+          Write-Host "Stage0 tfvars   = $tfvars"
 
           function Get-AliasNameFromTfvars([string]$Path) {
             if (-not (Test-Path -LiteralPath $Path)) { return "" }
@@ -112,19 +124,19 @@ stages:
 
           # === tfvars 存在チェック（無ければ RUN_LATER を出力して早期 return）===
           if (-not (Test-Path -LiteralPath $tfvars)) {
-            Write-Warning "terraform.tfvars not found: $tfvars"
+            Write-Host "WARN: terraform.tfvars not found: $tfvars"
             Write-Host ("##vso[task.setvariable variable=subscriptionAlias;isOutput=true]")
             Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
-            Write-Host "⏭  Stage0: tfvars 未検出のため RUN_LATER を出力して終了します。"
+            Write-Host "INFO: Stage0 ended with RUN_LATER due to missing tfvars."
             return
           }
 
           $aliasName = Get-AliasNameFromTfvars -Path $tfvars
           if ([string]::IsNullOrWhiteSpace($aliasName)) {
-            Write-Warning "subscription_alias_name is empty in tfvars."
+            Write-Host "WARN: subscription_alias_name is empty in tfvars."
             Write-Host ("##vso[task.setvariable variable=subscriptionAlias;isOutput=true]")
             Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
-            Write-Host "⏭  Stage0: alias 未設定のため RUN_LATER を出力して終了します。"
+            Write-Host "INFO: Stage0 ended with RUN_LATER due to empty alias."
             return
           }
 
@@ -136,7 +148,7 @@ stages:
           if ($existingSubId) {
             Write-Host "Alias already exists. Skip Terraform. alias=$aliasName subId=$existingSubId"
             try {
-              Set-Location $stageDir
+              Push-Location $stageDir
               terraform init
               $rid = "/providers/Microsoft.Subscription/aliases/$aliasName"
               terraform import -no-color azapi_resource.subscription $rid 2>$null
@@ -144,24 +156,23 @@ stages:
             } catch {
               Write-Host "terraform import failed but ignored."
             } finally {
-              Set-Location "$(Build.SourcesDirectory)"
+              Pop-Location
             }
 
             Write-Host ("subscriptionId=" + $existingSubId)
             Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]" + $existingSubId)
-            Write-Host "✅ Resolved subscriptionId (existing): $existingSubId"
+            Write-Host "INFO: Resolved subscriptionId (existing)."
             return
           }
 
           # === alias が無ければ作成 ===
-          $orig = Get-Location
           try {
-            Set-Location $stageDir
+            Push-Location $stageDir
             terraform init
             terraform plan -var-file="$tfvars" -out plan.out
             terraform apply -auto-approve plan.out
           } finally {
-            Set-Location $orig
+            Pop-Location
           }
 
           # output → 取得できなければ 6 分輪読
@@ -174,22 +185,23 @@ stages:
           if ($subId) {
             Write-Host ("subscriptionId=" + $subId)
             Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]" + $subId)
-            Write-Host "✅ Resolved subscriptionId (created): $subId"
+            Write-Host "INFO: Resolved subscriptionId (created)."
           } else {
-            Write-Warning "subscriptionId not resolved in Stage0 (alias may still be provisioning)."
+            Write-Host "WARN: subscriptionId not resolved in Stage0 (alias may still be provisioning)."
             Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]RUN_LATER")
-            Write-Host "⏭  Stage0: RUN_LATER を出力して終了します。"
+            Write-Host "INFO: Stage0 ended with RUN_LATER."
           }
 
-    # Stage0 出力の可視化
+    # Stage0 出力の可視化（一行で空判定が分かる）
     - powershell: |
-        Write-Host "== Stage0 outputs =="
-        Write-Host "alias : $(tf.subscriptionAlias)"
-        Write-Host "subId : $(tf.subscriptionId)"
+        $a = "$(tf.subscriptionAlias)"; if ([string]::IsNullOrWhiteSpace($a)) { $a = "[EMPTY]" }
+        $s = "$(tf.subscriptionId)";    if ([string]::IsNullOrWhiteSpace($s)) { $s = "[EMPTY]" }
+        Write-Host "[Stage0] alias=$a  subId=$s"
       displayName: "Echo Stage0 outputs (debug)"
 
 # =========================================================
 # Stage1〜4: 下流（subscriptionId が RUN_LATER または空なら停止）
+# 各ステージの最初に一行の空判定エコーを入れて可視化
 # =========================================================
 - stage: stage1_rg
   displayName: "Stage1 - Resource Group"
@@ -203,9 +215,10 @@ stages:
     displayName: "RG作成"
     steps:
     - powershell: |
-        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
-        Write-Host "subscriptionAlias        = $(subscriptionAlias)"
-      displayName: "Echo subId (debug)"
+        $sid = "$(subscriptionIdFromStage0)"; if ([string]::IsNullOrWhiteSpace($sid)) { $sid = "[EMPTY]" }
+        $als = "$(subscriptionAlias)";        if ([string]::IsNullOrWhiteSpace($als)) { $als = "[EMPTY]" }
+        Write-Host "[Stage1] subId=$sid alias=$als"
+      displayName: "Echo subId/alias (debug)"
 
     - task: AzureCLI@2
       displayName: "Terraform apply (Stage1 RG)"
@@ -218,7 +231,10 @@ stages:
           az account set --subscription "$(subscriptionIdFromStage0)"
           Write-Host "Using subscription: $(subscriptionIdFromStage0)"
           $env:ARM_USE_AZCLI_AUTH = "true"
-          Push-Location "$(Build.SourcesDirectory)\terraform\stage1-rg"
+          $dir1 = "$(Build.SourcesDirectory)\terraform\stage1-rg"
+          $dir2 = "$(Build.SourcesDirectory)\subscription-api\terraform\stage1-rg"
+          $dir  = (Test-Path $dir1) ? $dir1 : $dir2
+          Push-Location $dir
           try {
             terraform init -no-color
             terraform apply -auto-approve -no-color
@@ -237,7 +253,8 @@ stages:
     displayName: "VNet作成"
     steps:
     - powershell: |
-        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+        $sid = "$(subscriptionIdFromStage0)"; if ([string]::IsNullOrWhiteSpace($sid)) { $sid = "[EMPTY]" }
+        Write-Host "[Stage2] subId=$sid"
       displayName: "Echo subId (debug)"
 
     - task: AzureCLI@2
@@ -251,7 +268,10 @@ stages:
           az account set --subscription "$(subscriptionIdFromStage0)"
           Write-Host "Using subscription: $(subscriptionIdFromStage0)"
           $env:ARM_USE_AZCLI_AUTH = "true"
-          Push-Location "$(Build.SourcesDirectory)\terraform\stage2-vnet"
+          $dir1 = "$(Build.SourcesDirectory)\terraform\stage2-vnet"
+          $dir2 = "$(Build.SourcesDirectory)\subscription-api\terraform\stage2-vnet"
+          $dir  = (Test-Path $dir1) ? $dir1 : $dir2
+          Push-Location $dir
           try {
             terraform init -no-color
             terraform apply -auto-approve -no-color
@@ -270,7 +290,8 @@ stages:
     displayName: "Subnet + NSG + 関連付け"
     steps:
     - powershell: |
-        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+        $sid = "$(subscriptionIdFromStage0)"; if ([string]::IsNullOrWhiteSpace($sid)) { $sid = "[EMPTY]" }
+        Write-Host "[Stage3] subId=$sid"
       displayName: "Echo subId (debug)"
 
     - task: AzureCLI@2
@@ -284,7 +305,10 @@ stages:
           az account set --subscription "$(subscriptionIdFromStage0)"
           Write-Host "Using subscription: $(subscriptionIdFromStage0)"
           $env:ARM_USE_AZCLI_AUTH = "true"
-          Push-Location "$(Build.SourcesDirectory)\terraform\stage3-subnet"
+          $dir1 = "$(Build.SourcesDirectory)\terraform\stage3-subnet"
+          $dir2 = "$(Build.SourcesDirectory)\subscription-api\terraform\stage3-subnet"
+          $dir  = (Test-Path $dir1) ? $dir1 : $dir2
+          Push-Location $dir
           try {
             terraform init -no-color
             terraform apply -auto-approve -no-color
@@ -292,7 +316,7 @@ stages:
             Pop-Location
           }
 
-# （参考）Stage4 は今回は未実行のまま
+# 参考: Stage4 は無効
 - stage: stage4a_peering_s2h
   displayName: "Stage4a - Peering Spoke->Hub"
   dependsOn: stage3_subnet
