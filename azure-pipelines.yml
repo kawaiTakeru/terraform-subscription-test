@@ -1,43 +1,281 @@
-trigger:
-  branches:
-    include:
-      - main
+# subscription-api / azure-pipelines.yml
+trigger: none
+pr: none
 
 pool:
   name: Default
-  # demands:
-  #   - terraform
 
 variables:
-  TF_VERSION: '1.6.6'
+  - name: System.Debug
+    value: 'true'
 
 stages:
-  - stage: TerraformApply
-    jobs:
-      - job: Job
-        steps:
-          - checkout: self
-            displayName: '🔍 Checkout kawaiTakeru/terraform-subscription-test'
+# =========================================================
+# Stage0: Subscription (Create via AzAPI)
+#   - alias があれば apply せずに subscriptionId を取得
+#   - alias がなければ Terraform で alias 作成 → subscriptionId を取得
+# =========================================================
+- stage: stage0_subscription
+  displayName: "Stage0 - Create Subscription (AzAPI)"
+  jobs:
+  - job: run_tf
+    displayName: "Terraform apply (subscription)"
+    steps:
+    - powershell: |
+        Write-Host "Agent Name  : $env:AGENT_NAME"
+        Write-Host "Agent OS    : $env:AGENT_OS"
+        Write-Host "Agent Ver   : $env:AGENT_VERSION"
+      displayName: "Show Agent Info"
 
-          - script: |
-              echo "##[group]Step 1: Git clone"
-              git clone https://github.com/kawaiTakeru/terraform-subscription-test.git
-              cd terraform-subscription-test/terraform
-              echo "##[endgroup]"
+    - task: AzureCLI@2
+      displayName: "WHOAMI (service connection identity)"
+      inputs:
+        azureSubscription: 'snp-pipeline-api'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          $clientId = az account show --query user.name -o tsv
+          $tenantId = az account show --query tenantId -o tsv
+          $subName  = az account show --query name -o tsv
+          $subId    = az account show --query id -o tsv
 
-              echo "##[group]Step 2: terraform init"
+          $sp      = az ad sp show --id $clientId --only-show-errors
+          $spJson  = $sp | ConvertFrom-Json
+          $spObjId = $spJson.id
+          $spName  = $spJson.displayName
+
+          Write-Host "== Service Connection =="
+          Write-Host "tenantId    : $tenantId"
+          Write-Host "subscription: $subName ($subId)"
+          Write-Host "clientId    : $clientId"
+          Write-Host "spObjectId  : $spObjId"
+          Write-Host "spName      : $spName"
+          Write-Host ""
+          Write-Host "== Current role assignments for this SP (all scopes) =="
+          az role assignment list --assignee $spObjId --all -o table
+
+    - task: AzureCLI@2
+      name: tf
+      displayName: 'Terraform init/plan/apply (Stage0)'
+      inputs:
+        azureSubscription: 'snp-pipeline-api'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $stageDir = "$(Build.SourcesDirectory)\terraform\stage0-subscription"
+          $tfvars   = "$(Build.SourcesDirectory)\terraform\stage0-subscription\terraform.tfvars"
+
+          function Get-AliasNameFromTfvars([string]$Path) {
+            if (-not (Test-Path -LiteralPath $Path)) { return "" }
+            $line = Get-Content -LiteralPath $Path | Where-Object { $_ -match '^\s*subscription_alias_name\s*=' } | Select-Object -First 1
+            if ($line) { return ($line -replace '^\s*subscription_alias_name\s*=\s*"?([^"]+)"?\s*$', '$1') }
+            return ""
+          }
+
+          function Get-SubIdViaAz([string]$AliasName) {
+            if ([string]::IsNullOrWhiteSpace($AliasName)) { return "" }
+            try {
+              $id = az account alias show --name $AliasName --query "properties.subscriptionId" -o tsv 2>$null
+              if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
+            } catch {}
+            try {
+              $rid = "/providers/Microsoft.Subscription/aliases/$AliasName"
+              $id = az resource show --ids $rid --api-version 2021-10-01 --query "properties.subscriptionId" -o tsv 2>$null
+              if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
+            } catch {}
+            return ""
+          }
+
+          function Wait-SubscriptionReady([string]$AliasName, [int]$MaxSeconds, [int]$IntervalSeconds) {
+            $deadline = (Get-Date).AddSeconds($MaxSeconds)
+            while ((Get-Date) -lt $deadline) {
+              $id = ""
+              try {
+                $id = az account alias show --name $AliasName --query "properties.subscriptionId" -o tsv 2>$null
+                if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
+              } catch {}
+              try {
+                $rid = "/providers/Microsoft.Subscription/aliases/$AliasName"
+                $id = az resource show --ids $rid --api-version 2021-10-01 --query "properties.subscriptionId" -o tsv 2>$null
+                if ($LASTEXITCODE -eq 0 -and $id) { return $id.Trim() }
+              } catch {}
+              Start-Sleep -Seconds $IntervalSeconds
+            }
+            return ""
+          }
+
+          if (-not (Test-Path -LiteralPath $tfvars)) {
+            throw ("terraform.tfvars not found: " + $tfvars)
+          }
+
+          $aliasName = Get-AliasNameFromTfvars -Path $tfvars
+          if ([string]::IsNullOrWhiteSpace($aliasName)) {
+            throw "subscription_alias_name is empty in tfvars. Set it first."
+          }
+
+          # 次段でも参照できるよう alias を出力
+          Write-Host ("##vso[task.setvariable variable=subscriptionAlias;isOutput=true]" + $aliasName)
+
+          # まず alias 存在チェック
+          $existingSubId = Get-SubIdViaAz -AliasName $aliasName
+          if ($existingSubId) {
+            Write-Host "Alias already exists. Skip Terraform. alias=$aliasName subId=$existingSubId"
+            try {
+              Set-Location $stageDir
               terraform init
-              echo "##[endgroup]"
+              $rid = "/providers/Microsoft.Subscription/aliases/$aliasName"
+              terraform import -no-color azapi_resource.subscription $rid 2>$null
+              if ($LASTEXITCODE -ne 0) { Write-Host "terraform import skipped (not critical)." }
+            } catch {
+              Write-Host "terraform import failed but ignored."
+            } finally {
+              Set-Location "$(Build.SourcesDirectory)"
+            }
 
-              echo "##[group]Step 3: terraform plan"
-              terraform plan
-              echo "##[endgroup]"
+            Write-Host ("subscriptionId=" + $existingSubId)
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]" + $existingSubId)
+            Write-Host "✅ Resolved subscriptionId (existing): $existingSubId"
+            return
+          }
 
-              echo "##[group]Step 4: terraform apply"
-              terraform apply -auto-approve
-              echo "##[endgroup]"
+          # === alias が無ければ作成 ===
+          $orig = Get-Location
+          try {
+            Set-Location $stageDir
+            terraform init
+            terraform plan -var-file="$tfvars" -out plan.out
+            terraform apply -auto-approve plan.out
+          } finally {
+            Set-Location $orig
+          }
 
-              echo "##[group]Step 5: 完了 ✅"
-              echo "✅ サブスクリプション作成成功 ✅"
-              echo "##[endgroup]"
-            displayName: '⚙️ Run Terraform'
+          # output → 取得できなければ 6 分輪読
+          $subId = ""
+          try { $subId = terraform -chdir="$stageDir" output -raw subscription_id } catch {}
+          if (-not $subId) {
+            $subId = Wait-SubscriptionReady -AliasName $aliasName -MaxSeconds 360 -IntervalSeconds 10
+          }
+
+          if ($subId) {
+            Write-Host ("subscriptionId=" + $subId)
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]" + $subId)
+            Write-Host "✅ Resolved subscriptionId (created): $subId"
+          } else {
+            Write-Warning "subscriptionId not resolved in Stage0 (alias may still be provisioning)."
+            Write-Host ("##vso[task.setvariable variable=subscriptionId;isOutput=true]")
+          }
+
+    # 🔎 Stage0 出力の可視化（同一 Job 内は $(tf.xxx) で参照できる）
+    - powershell: |
+        Write-Host "== Stage0 outputs =="
+        Write-Host "alias : $(tf.subscriptionAlias)"
+        Write-Host "subId : $(tf.subscriptionId)"
+      displayName: "Echo Stage0 outputs (debug)"
+
+# =========================================================
+# Stage1〜4: 下流（Stage0 の subscriptionId が空なら停止）
+# =========================================================
+- stage: stage1_rg
+  displayName: "Stage1 - Resource Group"
+  dependsOn: stage0_subscription
+  variables:
+    subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
+    subscriptionAlias:        $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionAlias'] ]
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  jobs:
+  - job: apply_rg
+    displayName: "RG作成"
+    steps:
+    - powershell: |
+        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+      displayName: "Echo subId (debug)"
+
+    - task: AzureCLI@2
+      displayName: "Terraform apply (Stage1 RG)"
+      inputs:
+        azureSubscription: 'snp-pipeline-api'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          az account set --subscription "$(subscriptionIdFromStage0)"
+          Write-Host "Using subscription: $(subscriptionIdFromStage0)"
+          $env:ARM_USE_AZCLI_AUTH = "true"
+          Push-Location "$(Build.SourcesDirectory)\terraform\stage1-rg"
+          try {
+            terraform init -no-color
+            terraform apply -auto-approve -no-color
+          } finally {
+            Pop-Location
+          }
+
+- stage: stage2_vnet
+  displayName: "Stage2 - VNet"
+  dependsOn: stage1_rg
+  variables:
+    subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  jobs:
+  - job: apply_vnet
+    displayName: "VNet作成"
+    steps:
+    - powershell: |
+        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+      displayName: "Echo subId (debug)"
+
+    - task: AzureCLI@2
+      displayName: "Terraform apply (Stage2 VNet)"
+      inputs:
+        azureSubscription: 'snp-pipeline-api'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          az account set --subscription "$(subscriptionIdFromStage0)"
+          Write-Host "Using subscription: $(subscriptionIdFromStage0)"
+          $env:ARM_USE_AZCLI_AUTH = "true"
+          Push-Location "$(Build.SourcesDirectory)\terraform\stage2-vnet"
+          try {
+            terraform init -no-color
+            terraform apply -auto-approve -no-color
+          } finally {
+            Pop-Location
+          }
+
+- stage: stage3_subnet
+  displayName: "Stage3 - Subnet"
+  dependsOn: stage2_vnet
+  variables:
+    subscriptionIdFromStage0: $[ stageDependencies.stage0_subscription.run_tf.outputs['tf.subscriptionId'] ]
+  condition: and(succeeded(), ne(variables['subscriptionIdFromStage0'], ''))
+  jobs:
+  - job: apply_subnet
+    displayName: "Subnet + NSG + 関連付け"
+    steps:
+    - powershell: |
+        Write-Host "subscriptionIdFromStage0 = $(subscriptionIdFromStage0)"
+      displayName: "Echo subId (debug)"
+
+    - task: AzureCLI@2
+      displayName: "Terraform apply (Stage3 Subnet)"
+      inputs:
+        azureSubscription: 'snp-pipeline-api'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          az account set --subscription "$(subscriptionIdFromStage0)"
+          Write-Host "Using subscription: $(subscriptionIdFromStage0)"
+          $env:ARM_USE_AZCLI_AUTH = "true"
+          Push-Location "$(Build.SourcesDirectory)\terraform\stage3-subnet"
+          try {
+            terraform init -no-color
+            terraform apply -auto-approve -no-color
+          } finally {
+            Pop-Location
+          }
